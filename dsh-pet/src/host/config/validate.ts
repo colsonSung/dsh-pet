@@ -179,7 +179,13 @@ export function topFieldValid(key: string, value: unknown): boolean {
     case 'clickSoundEnabled':
       // 点击音效开关（全局布尔，只读 main 条目）：与 notificationsEnabled 同一套校验
       return typeof value === 'boolean';
+    case 'followMouse':
+      // 鼠标朝向开关：true = 宠物始终面朝光标那一侧；false = 回到随机转身
+      return typeof value === 'boolean';
     case 'whisperImageEnabled':
+      return typeof value === 'boolean';
+    case 'knowledgeEnabled':
+      // 宠物能不能引用同机其它插件（记忆/随手记/会议纪要/需求）里的事实：全局布尔。
       return typeof value === 'boolean';
     case 'voiceEnabled':
       // 语音播报开关（全局布尔）：只决定念不念，不影响气泡与记忆

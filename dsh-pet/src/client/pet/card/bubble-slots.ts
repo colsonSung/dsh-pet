@@ -77,6 +77,48 @@ export function balancePageCount(balance: BalanceState | null): number {
   return balance ? balancePageCountOf(balance) : 1;
 }
 
+/**
+ * 工作状态气泡该显示什么、要不要点亮（纯函数，好测）。
+ *
+ * 两条规则：
+ * 1. **有话才亮**：任务详情是真实信息（「翻翻 package.json 看看嘛」）；
+ *    没有任务详情时，只有「状态本身就是消息」的档位才说话——等待确认 / 完成 / 出错。
+ *    「正在想下一步」这种纯氛围不算消息，没有消息就不该有气泡。
+ * 2. **新话才重新亮**：文案没变就不重新点亮，否则工作档位每 tick 都会亮一次，
+ *    气泡就一直挂在头顶（那是「看起来一直在忙」，不是「有话要说」）。
+ */
+export interface WorkTextInput {
+  /** 宿主给的任务详情；null = 没有真实信息。 */
+  task: string | null;
+  /** 当前档位（waiting / success / error 算「状态本身即消息」）。 */
+  state: string | null;
+  /** 档位文案（调用方已随机抽好一句）；undefined = 没配。 */
+  configuredText: string | undefined;
+  /** 上一条文案（用来判「新话」）。 */
+  prevText: string | null;
+  /** 档位是否刚变。 */
+  stateChanged: boolean;
+}
+
+/** 工作状态气泡的判定结果。 */
+export interface WorkTextDecision {
+  /** 气泡文案；null = 不显示气泡。 */
+  text: string | null;
+  /** 该不该点亮气泡。 */
+  light: boolean;
+}
+
+/** 状态本身就是消息的档位：这几档说的确实是件事，不是「我在忙」。 */
+const STATE_IS_MESSAGE = new Set(['waiting', 'success', 'error']);
+
+export function decideWorkText(input: WorkTextInput): WorkTextDecision {
+  const stateIsMessage = input.state !== null && STATE_IS_MESSAGE.has(input.state);
+  const text = input.task ?? (stateIsMessage ? input.configuredText ?? null : null);
+  if (text === null) return { text: null, light: false };
+  const textChanged = text !== input.prevText;
+  return { text, light: input.stateChanged || textChanged };
+}
+
 /** 余额气泡组件；props 与 `client/bubble.ts` 的 BalanceBubble 一致。 */
 export type BalanceBubbleComponent = (props: {
   state: BalanceState;
@@ -283,8 +325,11 @@ export function createBubbleSlots(rt: BubbleSlotsRuntime, components: BubbleComp
     const lightWork = (terminal: boolean) => {
       setWorkOn(true);
       if (workTimerRef.current !== null) window.clearTimeout(workTimerRef.current);
-      // 非终态常驻，不设自动收起。
-      workTimerRef.current = terminal ? window.setTimeout(() => setWorkOn(false), BUBBLE_DURATION_MS) : null;
+      // 所有档位都自动收起：气泡是「有话才亮」，不是常驻指示灯。
+      // 以前只有终态收起，工作档位会一直挂在头顶——那是「看起来一直在忙」，
+      // 不是「有话要说」。工作档位的新文案由下一次点亮带来（见 cue-effects 的文案变化判定）。
+      void terminal;
+      workTimerRef.current = window.setTimeout(() => setWorkOn(false), BUBBLE_DURATION_MS);
     };
 
     const hideWork = () => {

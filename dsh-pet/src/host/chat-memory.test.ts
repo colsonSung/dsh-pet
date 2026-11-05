@@ -212,7 +212,7 @@ describe('createChatMemory —— 指定配图的碎碎念', () => {
     }
   });
 
-  test('voiceTo：传了就用传的，没传按 display 推导（默认宠物 display=both → desktop）', async () => {
+  test('voiceTo：传了就用传的，没传按 display 推导（默认宠物 display=web → web）', async () => {
     const ws = poolWorkspace();
     const records: Array<{ petId: string; leaf: string; data: Record<string, unknown> }> = [];
     try {
@@ -220,7 +220,7 @@ describe('createChatMemory —— 指定配图的碎碎念', () => {
       assert.equal(records[0]?.data.voiceTo, 'web', '显式传入优先于 display');
 
       await createMemory('纯文本一句', ws, ws.memeDir, { records }).publishWhisper('main');
-      assert.equal(records[1]?.data.voiceTo, 'desktop', '没传时按 display 推导：桌面优先');
+      assert.equal(records[1]?.data.voiceTo, 'web', '没传时按 display 推导：默认 display=web');
     } finally {
       rmSync(ws.dir, { recursive: true, force: true });
     }
@@ -238,7 +238,7 @@ describe('createChatMemory —— 指定配图的碎碎念', () => {
       assert.equal('voiceTo' in (offRecords[0]?.data ?? {}), false, '开关关着时周期碎碎念不该写 voiceTo');
 
       await createMemory('一句', off, off.memeDir, { records: offRecords }).publishWhisper('main');
-      assert.equal(offRecords[1]?.data.voiceTo, 'desktop', '手动触发不看那个开关，照常按 display 推导');
+      assert.equal(offRecords[1]?.data.voiceTo, 'web', '手动触发不看那个开关，照常按 display 推导');
     } finally {
       rmSync(off.dir, { recursive: true, force: true });
     }
@@ -252,7 +252,7 @@ describe('createChatMemory —— 指定配图的碎碎念', () => {
         undefined,
         'whisper',
       );
-      assert.equal(onRecords[0]?.data.voiceTo, 'desktop', '开关打开后周期碎碎念照常带 voiceTo');
+      assert.equal(onRecords[0]?.data.voiceTo, 'web', '开关打开后周期碎碎念照常带 voiceTo');
     } finally {
       rmSync(on.dir, { recursive: true, force: true });
     }
@@ -266,7 +266,7 @@ describe('createChatMemory —— 对话回复的 voiceTo', () => {
     try {
       const r = await createMemory('在的', ws, undefined, { records }).chatWithPet('main', '在吗');
       assert.equal(r.ok, true);
-      assert.equal(records[0]?.data.voiceTo, 'desktop', '默认宠物 display=both，桌面优先');
+      assert.equal(records[0]?.data.voiceTo, 'web', '默认宠物 display=web');
     } finally {
       rmSync(ws.dir, { recursive: true, force: true });
     }

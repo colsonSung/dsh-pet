@@ -103,6 +103,21 @@ function trimEdges(token: string): string {
  *
  * 这不是通用 shell 解析器，只为「找命令名」服务，所以只处理引号与分隔符，不解释变量、转义与管道。
  */
+/**
+ * 命令字符串 → 程序名（第一个像命令的词）。
+ *
+ * 只取程序名，不带参数：参数里可能有 token、内网地址、密钥。
+ * 用 `COMMAND_LIKE` 判「像不像命令名」，是为了跳过 `FOO=1` 这类环境变量前缀
+ * 和 `cd` 之后的路径。
+ */
+export function commandTarget(command: string): string | null {
+  const tokens = tokenizeCommand(command);
+  const nameAt = tokens.findIndex((token) => COMMAND_LIKE.test(token));
+  if (nameAt < 0) return null;
+  const name = tokens[nameAt];
+  return Array.from(name).length > 0 ? name : null;
+}
+
 export function tokenizeCommand(command: string): string[] {
   const tokens: string[] = [];
   let current = '';

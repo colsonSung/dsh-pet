@@ -14,6 +14,7 @@ import { findPetInstance, readAllConfig, removeRoundsByTs, sliceMemoryRounds } f
 import type { PetImageRef } from '../image-attachment.ts';
 import { limitPool, matchMeme, pickMeme, readMemePool } from '../memes.ts';
 import { generateWhisper } from '../whisper.ts';
+import { collectKnowledge, DEFAULT_MINUTES_DIR, KNOWLEDGE_LIMIT, renderKnowledge } from '../knowledge.ts';
 import { createMemoryOrphans } from './memory-orphans.ts';
 import { configuredModel } from '../model-selection.ts';
 import { SLEEP_TALK_INSTRUCTION } from '../whisper.ts';
@@ -91,14 +92,33 @@ export function createChatMemory(deps: ChatMemoryInput) {
     return run;
   };
 
+  /** 宠物掌握的事实（缓存 + TTL）：同一拍内多次生成共用一份，不必反复读那几个插件的数据。
+   *  TTL 短（60s）是为了让「刚记下的事」马上能被提到，同时不把读盘变成每句话都做一遍。 */
+  let knowledgeCache = { at: 0, text: '' };
+  const KNOWLEDGE_TTL_MS = 60_000;
+
+  /** 取事实段文本：没开开关、没有 profile 目录、或一个来源都没有时都是空串。 */
+  const knowledgeText = async (conf: Record<string, unknown>): Promise<string> => {
+    if (conf.knowledgeEnabled === false) return '';
+    const now = Date.now();
+    if (knowledgeCache.text !== '' && now - knowledgeCache.at < KNOWLEDGE_TTL_MS) return knowledgeCache.text;
+    const profileDir = (ctx as { profileContext?: { dir?: string } }).profileContext?.dir;
+    if (typeof profileDir !== 'string' || profileDir === '') return '';
+    const text = renderKnowledge(
+      await collectKnowledge({ profileDir, minutesDir: DEFAULT_MINUTES_DIR, limit: KNOWLEDGE_LIMIT }),
+    );
+    knowledgeCache = { at: now, text };
+    return text;
+  };
+
   /** 某宠物的最终人设 system：实例级 `pets[].whisperPrompt` 优先，没写回落到所属条目的那份。
-   *  拼装在 ./persona（纯函数）：人设正文 + 名字声明 + 一行时间背景，时间每次现算；
+   *  拼装在 ./persona（纯函数）：人设正文 + 名字声明 + 一行时间背景 +（可选）它掌握的事实，时间每次现算；
    *  对话路径传 `{ historyTimes: true }` 追加【历史】说明，碎碎念没有历史，不传。
    *  收 `findPetInstance` 的命中结果而不是 (petId, cfg)：调用方都已解析过，再查只会多一处
    *  「查不到就兜底 main」的不可达分支。 */
   const petSystemPrompt = (
     found: { conf: Record<string, unknown>; pet: Record<string, unknown> },
-    options: { historyTimes?: boolean } = {},
+    options: { historyTimes?: boolean; knowledge?: string } = {},
   ): string =>
     composeSystemPrompt({
       prompt: petPersona(found.conf, found.pet),
@@ -106,6 +126,7 @@ export function createChatMemory(deps: ChatMemoryInput) {
       id: String(found.pet.id ?? ''),
       now: new Date(),
       ...(options.historyTimes === true ? { historyTimes: true } : {}),
+      ...(options.knowledge !== undefined && options.knowledge !== '' ? { knowledge: options.knowledge } : {}),
     });
 
   /** 对话记忆轮数（1 轮 = 1 问 1 答）：该宠物所属条目的 chatMemoryRounds（合并器已填默认）。
@@ -147,7 +168,8 @@ export function createChatMemory(deps: ChatMemoryInput) {
     // 关掉就不写 voiceTo（叶子不带这个键 = 谁都不念），气泡照旧弹。
     const whisperVoiceOn = cfg.main?.voiceWhisperEnabled === true;
     const target = kind === 'whisper' && !whisperVoiceOn ? undefined : (voiceTo ?? voiceTargetFor(found.pet));
-    const system = petSystemPrompt(found);
+    const knowledge = await knowledgeText(found.conf);
+    const system = petSystemPrompt(found, { knowledge });
     // 池只算一次：点名的图与随机抽图共用同一份（含文件存在性判定）。
     const pool = readMemePool(found.conf.memes, memeDirsFor(found.entry));
     // 点名了却没命中 = 配置写错或图已被删：明确失败，不静默换成另一张（点了 A 却看到 B 会以为坏了）。
@@ -161,6 +183,7 @@ export function createChatMemory(deps: ChatMemoryInput) {
       system,
       meme,
       preferred: configuredModel(found.conf, 'whisperModel'),
+      knowledge: knowledge !== '',
     });
     if (!result.ok) {
       // 失败不写 S：静默跳过 + warn，不伪造文案、不弹错误气泡
@@ -196,7 +219,7 @@ export function createChatMemory(deps: ChatMemoryInput) {
     const cfg = readAllConfig(configPaths);
     const found = findPetInstance(cfg, petId);
     if (!found) return false;
-    const system = petSystemPrompt(found);
+    const system = petSystemPrompt(found, { knowledge: await knowledgeText(found.conf) });
     const result = await generateWhisper(ctx, {
       system,
       preferred: configuredModel(found.conf, 'whisperModel'),
@@ -259,7 +282,10 @@ export function createChatMemory(deps: ChatMemoryInput) {
       const list = sliceMemoryRounds(entry.messages, rounds);
       // 人设：实例级 whisperPrompt 优先，没写回落所属条目（与碎碎念同一拼装）。
       // 有历史才追加【历史】段：没有历史时那段话在描述不存在的前缀，只会误导模型。
-      const system = petSystemPrompt(found, { historyTimes: list.length > 0 });
+      const system = petSystemPrompt(found, {
+        historyTimes: list.length > 0,
+        knowledge: await knowledgeText(found.conf),
+      });
       // 图片只记尺寸与字节数（不记 base64）：模型不支持读图时 dsh-llm 会把它投影成占位文本，靠这行日志定位
       if (image !== undefined) {
         log.info(

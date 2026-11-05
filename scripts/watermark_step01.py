@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -26,8 +27,19 @@ MASK = SRC / "watermark_mask_v5.mkv"
 K = 5
 PARALLEL = 4
 # 统一使用工作区自带的 ffmpeg（素材处理链零第三方依赖）
-FFMPEG = str(ROOT / ".tools" / "ffmpeg-9.0.1-essentials_build" / "bin" / "ffmpeg.exe")
-FFPROBE = str(ROOT / ".tools" / "ffmpeg-9.0.1-essentials_build" / "bin" / "ffprobe.exe")
+
+# 素材处理链的 ffmpeg 定位：优先用仓库自带的构建，缺失时回落到 PATH 上的 ffmpeg。
+# 原先这里写死了 Windows 构建路径，在 macOS/Linux 上仓库没有 .tools/ 就完全跑不起来。
+def _tool(name: str) -> str:
+    bundled = ROOT / '.tools' / 'ffmpeg-9.0.1-essentials_build' / 'bin' / (name + '.exe')
+    if bundled.exists():
+        return str(bundled)
+    found = shutil.which(name)
+    return found if found else str(bundled)
+
+
+FFMPEG = _tool('ffmpeg')
+FFPROBE = _tool('ffprobe')
 sys.path.insert(0, str(ROOT / "scripts"))
 from fill_nn import fill_nn  # noqa: E402
 

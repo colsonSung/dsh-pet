@@ -27,6 +27,14 @@ const TIMEOUT_MS = 30_000;
 /** 碎碎念指令：纯文本（没有配图时的原样请求）。 */
 const USER_TEXT = '随便说一句日常碎碎念，一句就好，20 字以内。';
 
+/**
+ * 碎碎念指令（它掌握事实时）：让它接自己那摊事的话，而不是说天气。
+ *
+ * 说「只提一件事」是因为模型容易把整段复述一遍——那不叫聊天，叫念稿。
+ */
+const USER_TEXT_WITH_KNOWLEDGE =
+  '随便说一句日常碎碎念，一句就好，20 字以内。如果下面【你掌握的情况】里有能接上话的事，就接着那件具体的事说一句（只提一件事，不要复述整段）；没有能接的就还是随口一句。';
+
 /** 梦话指令：睡觉期间嘟囔一句。与碎碎念指令同属「功能指令」，不进配置（配置里只有人设）。 */
 const SLEEP_TALK_TEXT = '你正在睡觉，随便嘟囔一句梦话，一句就好，20 字以内；含糊、半梦半醒，不要清醒地回应任何人。';
 
@@ -40,9 +48,10 @@ export const SLEEP_TALK_INSTRUCTION = SLEEP_TALK_TEXT;
  * 图由调用方随机抽而不是让模型选：碎碎念没有上下文可依（人设固定、无用户输入），
  * 交模型选只能盲选，还多一层幻觉风险。
  */
-function userTextWithMeme(meme: { name: string; desc: string }): string {
+function userTextWithMeme(meme: { name: string; desc: string }, withKnowledge = false): string {
   return (
-    '随便说一句日常碎碎念，一句就好，20 字以内。\n' +
+    (withKnowledge ? USER_TEXT_WITH_KNOWLEDGE : USER_TEXT) +
+    '\n' +
     '这次会配一张表情包一起显示，图的内容是：' +
     meme.name +
     '（' +
@@ -62,6 +71,8 @@ export interface WhisperRequest {
   preferred?: ModelRef;
   /** 功能指令（梦话传 SLEEP_TALK_INSTRUCTION）；缺省 = 碎碎念指令。 */
   instruction?: string;
+  /** 它这次掌握了事实（system 里有【你掌握的情况】）：碎碎念指令据此改成「接那件事」。 */
+  knowledge?: boolean;
 }
 
 /**
@@ -123,7 +134,16 @@ async function generateWith(
     messages: [
       createUserMessage({
         content: [
-          { type: 'text', text: request.instruction ?? (request.meme ? userTextWithMeme(request.meme) : USER_TEXT) },
+          {
+            type: 'text',
+            text:
+              request.instruction ??
+              (request.meme
+                ? userTextWithMeme(request.meme, request.knowledge === true)
+                : request.knowledge === true
+                  ? USER_TEXT_WITH_KNOWLEDGE
+                  : USER_TEXT),
+          },
         ],
         source: { kind: 'user' },
       }),

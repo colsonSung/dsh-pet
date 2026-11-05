@@ -103,6 +103,9 @@ export interface Pet {
   /** 是否启用工作状态联动：true = 监听 DSH 会话事件，按 animations.events.workStatus 切档位动画与气泡。
    *  缺失默认 true。监听不调用模型，无 KV cache 风险。 */
   workStatusEnabled: boolean;
+  /** 鼠标朝向：true = 宠物始终面朝光标所在的一侧（带迟滞，换边只镜像不打断动画）；
+   *  false = 回到随机转身。缺失默认 true（跟随条目顶层那份）。 */
+  followMouse: boolean;
   /** 宠物固定：true = 随机链不抽转向与移动两档（权重按 0 算，份额并入原地小动作），只影响随机链——
    *  右键点播、/anim 接口、事件动画、点击回应与拖拽一律照常。缺失默认 false。 */
   fixedEnabled: boolean;
@@ -217,6 +220,9 @@ export interface ClientConfig {
   trayEnabled: boolean;
   /** 碎碎念配图开关：true = 每次从表情包池随机抽 1 张连同文本显示（碎碎念无上下文，故随机） */
   whisperImageEnabled: boolean;
+  /** 鼠标朝向开关：true = 宠物始终面朝光标所在的一侧（带迟滞，换边只镜像不打断动画）。
+   *  缺失默认 true。 */
+  followMouse: boolean;
   /** 对话配图开关：true = 把表情包清单交模型按语境选 1 张（可不选），false = 纯文本 */
   chatImageEnabled: boolean;
   /** 对话动作联动开关：true = 把 categories 下的动作清单交模型按语境挑一个当场表演，false = 纯文字 */

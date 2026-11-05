@@ -185,7 +185,7 @@ describe('安全与健壮性', () => {
 
   test('原型链上的名字不命中表：constructor / toString / __proto__ 按未知处理', () => {
     for (const name of ['constructor', 'toString', '__proto__', 'valueOf']) {
-      assert.equal(toolDetailFromEvent(call(name)), '这工具是干嘛的', name);
+      assert.equal(toolDetailFromEvent(call(name)), null, name);
     }
     oneOf(toolDetailFromEvent(call('pwsh', { command: 'constructor' })), [
       '跑一下 constructor 咯',
@@ -217,7 +217,7 @@ describe('安全与健壮性', () => {
     const cases = [
       call('read', { file_path: 'x'.repeat(200) }),
       call('web_search', { queries: ['长'.repeat(200)] }),
-      call('frobnicate'),
+      call('bash', { command: 'a'.repeat(200) }),
       call('pwsh', { command: 'a'.repeat(200) }),
     ];
     for (const event of cases) {
@@ -268,8 +268,8 @@ describe('目标过长 —— 换一句不带名字的氛围兜底', () => {
 });
 
 describe('兜底与跳过', () => {
-  test('未知工具 → 一句氛围话，不报工具名', () => {
-    assert.equal(toolDetailFromEvent(call('frobnicate')), '这工具是干嘛的');
+  test('未知工具 → 没有文案（反问等于没说，气泡不该占位置）', () => {
+    assert.equal(toolDetailFromEvent(call('frobnicate')), null);
   });
 
   test('语义已由别处表达的工具 → null（不许盖掉更具体的文案）', () => {

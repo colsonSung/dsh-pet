@@ -75,6 +75,8 @@ export interface CardStateApi {
   animRef: ReactNS.MutableRefObject<string>;
   /** 朝向的最新值。 */
   facingRef: ReactNS.MutableRefObject<PetFacing>;
+  /** 光标决定的那一侧；null = 还没收到过光标位置（随机转身照旧对调）。 */
+  mouseSideRef: ReactNS.MutableRefObject<PetFacing | null>;
   /** 归一化中心的最新值。 */
   customPosRef: ReactNS.MutableRefObject<Center | null>;
 }
@@ -125,6 +127,8 @@ export function createCardState(rt: CardStateRuntime) {
     animRef.current = anim;
     const facingRef = useRef(facing);
     facingRef.current = facing;
+    // 光标侧：跟着鼠标更新，随机转身靠它决定转到哪边。
+    const mouseSideRef = useRef<PetFacing | null>(null);
     const customPosRef = useRef(customPos);
     customPosRef.current = customPos;
 
@@ -153,6 +157,7 @@ export function createCardState(rt: CardStateRuntime) {
       animRef,
       customPosRef,
       facingRef,
+      mouseSideRef,
       state: { anim, corner, cuePlayback, customPos, facing, margin, once, seq, size, tipOn },
     };
   };

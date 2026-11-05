@@ -44,6 +44,8 @@ export interface SystemPromptParts {
   now: Date;
   /** 历史消息是否带时间前缀；缺省 false（碎碎念没有历史，不该出现【历史】段） */
   historyTimes?: boolean;
+  /** 宠物掌握的事实（renderKnowledge 的成品）；空串 = 没有这一段 */
+  knowledge?: string;
 }
 
 /**
@@ -63,5 +65,8 @@ export function composeSystemPrompt(parts: SystemPromptParts): string {
     // 【历史】跟着时间背景走：它整句都在引用“现在”，没有时间背景时不成立
     if (parts.historyTimes === true) lines.push(HISTORY_TIMES_LINE);
   }
+  // 事实段放在最后：它是宠物可以引用的事实，不是身份，也不是格式要求。
+  const knowledge = typeof parts.knowledge === 'string' ? parts.knowledge.trim() : '';
+  if (knowledge !== '') lines.push(knowledge);
   return lines.join('\n');
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
@@ -14,8 +15,19 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "step01"
 OUT = ROOT / "step02"
 # 统一使用工作区自带的 ffmpeg（素材处理链零第三方依赖）
-FFMPEG = str(ROOT / ".tools" / "ffmpeg-9.0.1-essentials_build" / "bin" / "ffmpeg.exe")
-FFPROBE = str(ROOT / ".tools" / "ffmpeg-9.0.1-essentials_build" / "bin" / "ffprobe.exe")
+
+# 素材处理链的 ffmpeg 定位：优先用仓库自带的构建，缺失时回落到 PATH 上的 ffmpeg。
+# 原先这里写死了 Windows 构建路径，在 macOS/Linux 上仓库没有 .tools/ 就完全跑不起来。
+def _tool(name: str) -> str:
+    bundled = ROOT / '.tools' / 'ffmpeg-9.0.1-essentials_build' / 'bin' / (name + '.exe')
+    if bundled.exists():
+        return str(bundled)
+    found = shutil.which(name)
+    return found if found else str(bundled)
+
+
+FFMPEG = _tool('ffmpeg')
+FFPROBE = _tool('ffprobe')
 
 PARALLEL = 4
 W, H, FPS = 1280, 720, 24
@@ -143,6 +155,26 @@ def _rgb_to_hsv(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return hue, sat, mx
 
 
+def _despill(frame: np.ndarray, alpha: np.ndarray, bg: np.ndarray) -> np.ndarray:
+    # 去掉抠像后轮廓上残留的绿色（绿溢色 / edge fringe）。
+    # 桌宠在浅色背景上会有一圈绿边，根因是：边缘像素是「角色」与「绿幕」的混合，
+    # 色相刚好落在绿区外时 alpha 判为 255（不透明），但颜色里仍然带着绿分量。
+    # 做法：
+    #   1. 反解前景色 F = (C - (1-a)*bg) / a（a=1 时 F=C，实心像素不受这一步影响）；
+    #   2. 把前景里「绿得过头」的部分（g > max(r,b)）夹到 max(r,b)——那部分一定是背景漏进来的；
+    #   3. 按 alpha 的可信度混合回原色：alpha 太小反解会放大噪声，就少信它。
+    a = (alpha.astype(np.float32) / 255.0)[:, :, None]
+    rgb = frame.astype(np.float32) / 255.0
+    fg = (rgb - (1.0 - a) * bg[None, None, :]) / np.maximum(a, 1e-3)
+    fg = np.clip(fg, 0.0, 1.0)
+    # 绿得过头 -> 夹到 max(r, b)。角色的黄色 r>g，红色 g<b，都不受影响。
+    over = (fg[..., 1] > fg[..., 0]) & (fg[..., 1] > fg[..., 2])
+    fg[..., 1] = np.where(over, np.maximum(fg[..., 0], fg[..., 2]), fg[..., 1])
+    # alpha 越大越信任反解：0.10 以下完全不信，0.40 以上全信
+    trust = np.clip((a - 0.10) / 0.30, 0.0, 1.0)
+    out = rgb * (1.0 - trust) + fg * trust
+    return np.clip(out * 255.0, 0, 255).astype(np.uint8)
+
 def convert_video(src: Path, dst: Path, color: str) -> None:
     """HSV 色相判定抠像：绿色色相 + 足够饱和/明度 → 透明。
 
@@ -174,6 +206,7 @@ def convert_video(src: Path, dst: Path, color: str) -> None:
         bg_mask = (sat >= SAT_MIN) & (val >= VAL_MIN) & (hue >= lo) & (hue <= hi)
         # 背景 → alpha 0（透明）；绿色色相中心全透明，边缘渐变；非背景 → 255
         alpha = np.where(bg_mask, (1.0 - in_hue) * 255, 255).astype(np.uint8)
+        frame = _despill(frame, alpha, bg.astype(np.float32) / 255.0)
         y, u, v = _rgb_to_yuv(frame)
         p2.stdin.write(y.tobytes() + u.tobytes() + v.tobytes() + alpha.tobytes())
     p1.stdout.close()

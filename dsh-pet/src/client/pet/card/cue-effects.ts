@@ -8,6 +8,7 @@
 import { balanceEventIndex, balancePercent } from '../../../shared/balance/index.ts';
 import { pickSlot, poolIncludes } from '../../../shared/pickers.ts';
 import { WORK_STATUS_INDEX } from '../../../shared/work-status.ts';
+import { decideWorkText } from './bubble-slots.ts';
 import { playSayVoice } from '../../../shared/voice.ts';
 import type { CardHub } from './hub.ts';
 import type { PetCardProps } from './props.ts';
@@ -48,6 +49,9 @@ export function createCueEffects(rt: CueEffectsRuntime) {
     const prevWorkRef = useRef(0);
     // 调试日志：上一档位，null 表示空闲，undefined 表示启动后尚未触发。
     const prevWorkStateRef = useRef<string | null | undefined>(undefined);
+    // 上一条气泡文案：用来判「这是不是新话」。
+    // 没有它，工作档位每次 tick 都会重新点亮，气泡就一直挂在头顶。
+    const prevWorkTextRef = useRef<string | null>(null);
     const prevSayRef = useRef(0);
     const prevAnimRef = useRef(0);
     const prevPosRef = useRef(0);
@@ -117,6 +121,8 @@ export function createCueEffects(rt: CueEffectsRuntime) {
       if (!workStatus || workStatus.state === null) {
         log('pet=' + cfg.id + ' ' + (prevWorkStateRef.current ?? 'null') + '->null    播完即停（回待机，收起气泡）');
         prevWorkStateRef.current = null;
+        // 回空闲：文案引用也复位，否则下次开工时第一句会被判成「没变」而不亮。
+        prevWorkTextRef.current = null;
         // 回空闲时把循环中的工作动画改成「播完即停」：否则 ended 永不触发，动画链拿不到
         // 推进信号，宠物会一直卡在工作动画上。
         if (poolIncludes(hub.anims().events?.workStatus ?? [], card.animRef.current)) hub.ownAnim.stopLoopingFront();
@@ -124,36 +130,45 @@ export function createCueEffects(rt: CueEffectsRuntime) {
         return;
       }
       const pool = hub.anims().events?.workStatus;
-      if (!pool || pool.length === 0) {
-        console.error('[dsh-pet] 配置缺少 animations.events.workStatus，无法播放工作状态动画');
-        return;
-      }
       const idx = WORK_STATUS_INDEX[workStatus.state];
-      const slot = pool[idx];
+      const slot = pool?.[idx];
+      // 档位缺动画 ≠ 这一档不用说话。
+      // 以前这里直接 return，气泡文案与状态都不再推进——文案卡在上一句、动画卡在工作档，
+      // 表现就是「头顶的字一直都在」。动画缺了就少播一段动画，话照说、状态照走。
       if (slot === undefined) {
-        console.error('[dsh-pet] work-status 档位索引越界：state=' + workStatus.state + ' idx=' + idx);
-        return;
+        console.error('[dsh-pet] work-status 档位缺动画：state=' + workStatus.state + ' idx=' + idx + '（气泡与状态照常推进）');
       }
-      const name = pickSlot(slot, card.animRef.current); // 档内随机抽 1，并避开当前正播动画。
-      log('pet=' + cfg.id + ' ' + (prevWorkStateRef.current ?? 'null') + '->' + workStatus.state + '    ' + name);
       const stateChanged = prevWorkStateRef.current !== workStatus.state;
       prevWorkStateRef.current = workStatus.state;
       hub.stopMotion();
-      // 气泡文本：任务详情优先，否则从 workStatusTexts[档位] 随机抽一句。
+      // 气泡文本与点亮判定（纯函数在 bubble-slots.ts，规则见那里的注释）：
+      // 有话才亮（真实任务详情，或等待/完成/出错这类「状态本身即消息」的档位），新话才重新亮。
       const textGroup = Array.isArray(cfg.workStatusTexts) ? cfg.workStatusTexts[idx] : undefined;
       const configuredText =
         Array.isArray(textGroup) && textGroup.length > 0
           ? textGroup[Math.floor(Math.random() * textGroup.length)]
           : undefined;
+      const decision = decideWorkText({
+        task: workStatus.task,
+        state: workStatus.state,
+        configuredText,
+        prevText: prevWorkTextRef.current,
+        stateChanged,
+      });
       // 文本总是更新，任务详情可能在同一状态下变化。
-      hub.bubbles.updateWorkText(workStatus.task ?? configuredText ?? null);
+      hub.bubbles.updateWorkText(decision.text);
+      prevWorkTextRef.current = decision.text;
       const terminal = workStatus.state === 'success' || workStatus.state === 'error';
-      // 只在状态变化时点亮或收起气泡：同状态后续 tick 不重新点亮已自动收起的终态气泡。
-      if (stateChanged) hub.bubbles.lightWork(terminal);
+      if (decision.light) hub.bubbles.lightWork(terminal);
       // 循环语义：终态播一遍；非终态单候选无限循环，多候选播一遍后由播完判定轮换。
-      const rotating = !terminal && Array.isArray(slot) && slot.length > 1;
-      card.actions.setOnce(terminal || rotating);
-      card.actions.setAnim(name);
+      // 这一档没有动画时不动画面（气泡与状态照常推进，见上面的注释）。
+      if (slot !== undefined) {
+        const name = pickSlot(slot, card.animRef.current); // 档内随机抽 1，并避开当前正播动画。
+        log('pet=' + cfg.id + ' ' + (prevWorkStateRef.current ?? 'null') + '->' + workStatus.state + '    ' + name);
+        const rotating = !terminal && Array.isArray(slot) && slot.length > 1;
+        card.actions.setOnce(terminal || rotating);
+        card.actions.setAnim(name);
+      }
     };
 
     /** 说话（碎碎念、命令气泡、对话回复、清空）：序号变化即执行清空或弹气泡。 */

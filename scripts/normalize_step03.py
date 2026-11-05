@@ -11,24 +11,38 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
+from scipy import ndimage
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "step02"
 OUT = ROOT / "step03"
 # 统一使用工作区自带的 ffmpeg（素材处理链零第三方依赖）
-FFMPEG = str(ROOT / ".tools" / "ffmpeg-9.0.1-essentials_build" / "bin" / "ffmpeg.exe")
-FFPROBE = str(ROOT / ".tools" / "ffmpeg-9.0.1-essentials_build" / "bin" / "ffprobe.exe")
+
+# 素材处理链的 ffmpeg 定位：优先用仓库自带的构建，缺失时回落到 PATH 上的 ffmpeg。
+# 原先这里写死了 Windows 构建路径，在 macOS/Linux 上仓库没有 .tools/ 就完全跑不起来。
+def _tool(name: str) -> str:
+    bundled = ROOT / '.tools' / 'ffmpeg-9.0.1-essentials_build' / 'bin' / (name + '.exe')
+    if bundled.exists():
+        return str(bundled)
+    found = shutil.which(name)
+    return found if found else str(bundled)
+
+
+FFMPEG = _tool('ffmpeg')
+FFPROBE = _tool('ffprobe')
 
 PARALLEL = 4
 CANVAS_W = 2160  # 16:9：2160 = 1215 * 16/9，与原始视频同比例
 CANVAS_H = 1215
 TARGET_HEIGHT = 900
 FEET_Y = CANVAS_H - 100  # 距底 100
+EDGE_MARGIN = 0.02  # 内容离画幅边缘的安全余量（占画幅比例）
 
 SRC_W = 1280
 SRC_H = 720
@@ -39,15 +53,22 @@ TAIL_SEEK = -0.2  # 从末尾取帧，避免取到收尾动作
 _BBOX_RE = re.compile(r"x1:(\d+) x2:(\d+) y1:(\d+) y2:(\d+)")
 
 
-def scan_bbox(video: Path, seek: float | None = None, frames: int | None = None) -> list[tuple[int, int, int, int]]:
-    """用 alphaextract,bbox 滤镜扫描帧内容边界，返回 [(x1, x2, y1, y2)] 列表。"""
+def scan_bbox(video: Path, seek: float | None = None, frames: int | None = None,
+                min_val: int = 64) -> list[tuple[int, int, int, int]]:
+    """用 alphaextract,bbox 滤镜扫描帧内容边界，返回 [(x1, x2, y1, y2)] 列表。
+
+    min_val 是 alpha 的可见门槛。默认 64（= alpha>63，「看得见」）：
+    抠像后画幅边缘常留一层极淡的残边，用滤镜自带的默认值（16）会把残边也算进内容范围，
+    于是并集被撑满整个画幅、缩放被过度压缩，角色在不同动作之间大小不一致
+    （实测 idle-march 的并集被撑到 0..1279，角色缩到只剩正常的一半大）。
+    """
     cmd = [FFMPEG, "-hide_banner", "-loglevel", "info", "-c:v", "libvpx-vp9"]
     if seek is not None:
         cmd += ["-sseof", str(seek)]
     cmd += ["-i", str(video)]
     if frames is not None:
         cmd += ["-frames:v", str(frames)]
-    cmd += ["-vf", "alphaextract,bbox", "-f", "null", "-"]
+    cmd += ["-vf", f"alphaextract,bbox=min_val={min_val}", "-f", "null", "-"]
     # text=True 时显式指定 UTF-8 解码（Windows 默认 GBK 会解不了 ffmpeg 的 UTF-8 输出）
     result = subprocess.run(cmd, check=False, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
@@ -107,16 +128,92 @@ def measure_standing(video: Path) -> dict:
 
 
 def measure_content_union(video: Path) -> tuple[int, int, int, int]:
-    """全帧扫描内容范围并集 (x1, y1, x2, y2)，用于校验动画内容是否被裁。"""
-    boxes = scan_bbox(video)
-    if not boxes:
+    """全帧扫描内容范围并集 (x1, y1, x2, y2)，用于校验动画内容是否被裁。
+
+    只算「实体内容」，不算残留：
+    - alpha >= 64 才是看得见的；
+    - 开运算去掉 1-2 像素宽的残留线（画幅边缘常有一圈极淡的残边）；
+    - 连通块面积小于画幅 0.5% 的碎片忽略（噪点）。
+
+    为什么不用 ffmpeg 的 bbox 滤镜（min_val 已经调到 64 仍然不够）：
+    残留线的像素够亮，min_val 滤不掉；并集被撑满整幅 -> 缩放被过度压缩，
+    角色在不同动作之间大小不一致（实测 idle-march / act-spin 被压到只有正常的一半大）。
+    """
+    w, h = SRC_W, SRC_H
+    cmd = [
+        FFMPEG, "-v", "error", "-c:v", "libvpx-vp9", "-i", str(video),
+        "-f", "rawvideo", "-pix_fmt", "rgba", "-",
+    ]
+    raw = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+    size = w * h * 4
+    if not raw or len(raw) < size:
+        raise RuntimeError(f"Cannot decode frames from {video.name}")
+    frames = len(raw) // size
+    x1, y1, x2, y2 = w, h, -1, -1
+    min_area = w * h * 0.005
+    for i in range(frames):
+        buf = raw[i * size:(i + 1) * size]
+        alpha = np.frombuffer(buf, dtype=np.uint8)[3::4].reshape(h, w)
+        vis = alpha >= 64
+        if not vis.any():
+            continue
+        vis = ndimage.binary_opening(vis, structure=np.ones((3, 3)))
+        labelled, count = ndimage.label(vis)
+        if count == 0:
+            continue
+        for idx, sl in enumerate(ndimage.find_objects(labelled), start=1):
+            if sl is None:
+                continue
+            ys, xs = sl
+            area = int((labelled[sl] == idx).sum())
+            if area < min_area:
+                continue
+            x1 = min(x1, xs.start)
+            y1 = min(y1, ys.start)
+            x2 = max(x2, xs.stop - 1)
+            y2 = max(y2, ys.stop - 1)
+    if x2 < 0:
         raise RuntimeError(f"No opaque pixels found in {video.name}")
-    return (
-        min(b[0] for b in boxes),
-        min(b[2] for b in boxes),
-        max(b[1] for b in boxes),
-        max(b[3] for b in boxes),
-    )
+    return (x1, y1, x2, y2)
+
+
+def fit_scale(standing: dict, union: tuple[int, int, int, int]) -> float:
+    """求一个「任何一帧都不出画幅」的缩放系数。
+
+    原来的缩放只看首尾的站立帧（measure_standing），于是**动作里比站立更高的那些帧
+    （举手过头、跳跃、歪头）会溢出画幅顶部被切掉**——角色缺耳朵、头顶的特效被切一半。
+    实测 12 段素材里 7 段中招，而且裁切是间歇性的（只在某些帧出现），看缩略图很容易漏掉。
+
+    做法：把「所有帧的内容并集」也当作约束。缩放 s 时，并集在画布上的位置是
+      X = CANVAS_W/2 + (union_x - center_x) * s     （站立角色水平居中）
+      Y = FEET_Y      + (union_y - max_y)  * s     （站立脚底贴 FEET_Y）
+    要求这四个边界都在画布内，反解出 s 的上限，取最小值。
+    """
+    scale = TARGET_HEIGHT / standing["height"]
+    cx = standing["center_x"]
+    my = standing["max_y"]
+    x1, y1, x2, y2 = union
+    limits = []
+    # 安全余量：内容不只要「在画幅内」，还要离边缘有一段距离——
+    # 正好压在 y=0 上时，任何一次缩放取整都会再削掉一行像素。
+    margin_x = CANVAS_W * EDGE_MARGIN
+    margin_y = CANVAS_H * EDGE_MARGIN
+    # 水平：并集左右两侧都要留在画幅内
+    for span in (cx - x1, x2 - cx):
+        if span > 0:
+            limits.append((CANVAS_W / 2 - margin_x) / span)
+    # 垂直向上：最高点不能越过上沿
+    up = my - y1
+    if up > 0:
+        limits.append((FEET_Y - margin_y) / up)
+    # 垂直向下：最低点不能越过下沿
+    down = y2 - my
+    if down > 0:
+        limits.append((CANVAS_H - FEET_Y - margin_y) / down)
+    for limit in limits:
+        if limit < scale:
+            scale = limit
+    return scale
 
 
 def build_filter(scale: float, standing: dict) -> str:
@@ -193,7 +290,9 @@ def _process_one(video: Path) -> tuple[dict, bool]:
     skip = _is_valid(dst, video)
     standing = measure_standing(video)
     union = measure_content_union(video)
-    scale = TARGET_HEIGHT / standing["height"]
+    # 缩放必须同时满足「站立姿态的比例」与「全帧内容并集不出画幅」——
+    # 只按站立帧算，动作里更高的帧（举手/跳跃/歪头）会溢出顶部被切掉。
+    scale = fit_scale(standing, union)
     entry = {
         "file": video.name,
         "standing": {k: round(v, 1) for k, v in standing.items()},

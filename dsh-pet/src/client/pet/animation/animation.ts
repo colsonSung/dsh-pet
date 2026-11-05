@@ -83,6 +83,10 @@ export interface OwnAnimation {
   isFrozen: () => boolean;
   /** 前台元素；进度服务读它。 */
   frontVideo: () => HTMLVideoElement | null;
+  /** 按当前朝向重新套一次镜像（换朝向时调用）。
+   *  镜像平时是在换源就位时写进 style.transform 的，换朝向不会重写——
+   *  不主动补这一下，宠物要等下一段动画才开始才翻过去。 */
+  refreshFacing: () => void;
   /** 正在播的点播编号；自播动画为 `null`。 */
   playingPlayback: () => string | null;
   /** 卸载清理：中断在途请求、释放 blob，之后不可再用。 */
@@ -216,6 +220,9 @@ export function createOwnAnimation(deps: OwnAnimationDeps): OwnAnimation {
       pending = null;
       playing = cuePlaybackId;
       el.style.transform = deps.facing() === 'right' ? 'scaleX(-1)' : '';
+      // 后台那一槽也补上：两槽轮换时会出现「前景已翻、背景还是旧的」，切过去才看到。
+      const other = elementOf(front === 0 ? 1 : 0);
+      if (other !== null) other.style.transform = deps.facing() === 'right' ? 'scaleX(-1)' : '';
       el.play()
         .then(() => {
           // 只有 play() 兑现才代表确实开始出画，loadeddata 只代表可解码。
@@ -283,6 +290,13 @@ export function createOwnAnimation(deps: OwnAnimationDeps): OwnAnimation {
     },
     isFrozen: () => frozen,
     frontVideo,
+    refreshFacing: () => {
+      // 两槽都补：前台是当前在播的，后台是下一段要接上的（换源时才写镜像会漏掉后台）。
+      const mirror = deps.facing() === 'right' ? 'scaleX(-1)' : '';
+      for (const el of [elementOf(front), elementOf(front === 0 ? 1 : 0)]) {
+        if (el !== null) el.style.transform = mirror;
+      }
+    },
     playingPlayback: () => playing,
     dispose: () => {
       mounted = false;

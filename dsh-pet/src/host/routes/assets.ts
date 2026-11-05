@@ -131,9 +131,16 @@ export async function handleAssetsRoutes(deps: PetRouteDeps, input: RouteInput):
   /** 按扩展名查同名素材（专属目录优先；否则用户根 → 包内根） */
   const findAnim = (e: string): string | undefined => {
     const name = fileName.replace(/\.(webm|mov)$/i, '') + e;
-    return extraAnimDir !== undefined && existsSync(extraAnimDir)
-      ? resolveExisting(extraAnimDir, name)
-      : (resolveExisting(userRootFor(e), name) ?? resolveExisting(assetRootFor(e), name));
+    if (extraAnimDir !== undefined && existsSync(extraAnimDir)) {
+      // .mov 走包内的 mov/ 子目录：与主素材层（animSubdirFor）和文档一致。
+      // 缺了这一步，宠物包的 HEVC 素材只会回落到同名 webm——Safari 丢 alpha，表现为黑底。
+      const dir = e === '.mov' ? resolveAsset(extraAnimDir, 'mov') : extraAnimDir;
+      const found = dir === undefined ? undefined : resolveExisting(dir, name);
+      if (found !== undefined) return found;
+      // 兼容旧布局：.mov 直接放在包根（mov/ 子目录之前的摆法）。
+      return resolveExisting(extraAnimDir, name);
+    }
+    return resolveExisting(userRootFor(e), name) ?? resolveExisting(assetRootFor(e), name);
   };
 
   let file = findAnim(ext);

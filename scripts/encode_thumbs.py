@@ -23,6 +23,7 @@ step04 是素材处理链的最终产物。发布/安装插件时把 step04 的�
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -31,8 +32,19 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "step03"
 OUT = ROOT / "step04"
 # 统一使用工作区自带的 ffmpeg（素材处理链零第三方依赖）
-FFMPEG = str(ROOT / ".tools" / "ffmpeg-9.0.1-essentials_build" / "bin" / "ffmpeg.exe")
-FFPROBE = str(ROOT / ".tools" / "ffmpeg-9.0.1-essentials_build" / "bin" / "ffprobe.exe")
+
+# 素材处理链的 ffmpeg 定位：优先用仓库自带的构建，缺失时回落到 PATH 上的 ffmpeg。
+# 原先这里写死了 Windows 构建路径，在 macOS/Linux 上仓库没有 .tools/ 就完全跑不起来。
+def _tool(name: str) -> str:
+    bundled = ROOT / '.tools' / 'ffmpeg-9.0.1-essentials_build' / 'bin' / (name + '.exe')
+    if bundled.exists():
+        return str(bundled)
+    found = shutil.which(name)
+    return found if found else str(bundled)
+
+
+FFMPEG = _tool('ffmpeg')
+FFPROBE = _tool('ffprobe')
 
 PARALLEL = 4
 # 转码参数（调这里改画质/分辨率）

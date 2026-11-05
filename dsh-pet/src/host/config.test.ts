@@ -36,6 +36,7 @@ const BASE = {
       balanceEnabled: false,
       whisperEnabled: false,
       workStatusEnabled: false,
+      followMouse: false,
       fixedEnabled: false,
       display: 'web',
       position: { corner: 'bottom-right', marginX: 40, marginY: 40 },

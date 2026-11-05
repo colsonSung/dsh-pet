@@ -23,6 +23,7 @@ import { createCardAnimation } from './animation.ts';
 import { createCardDrag } from './drag.ts';
 import { createCardEntry, type CardEntry } from './entry.ts';
 import { createCardMotion } from './motion.ts';
+import { POINTER_HYSTERESIS_PX, sideTowardPointer } from './mouse-facing.ts';
 import { createCardState } from './state.ts';
 import { createCueEffects } from './cue-effects.ts';
 import { createLockFreeze } from './lock-freeze.ts';
@@ -68,6 +69,36 @@ export function createCardRuntime(rt: PetRuntime) {
     // 物理、字号与 CSS 变量都吃这一个值——两处各算一次会让命中框与视觉错位。
     const effectiveSizePx = resolvePetSizePx(cfg.size, cfg.sizePercent, window.innerWidth);
 
+    // 鼠标朝向：宠物始终面朝光标所在的一侧。
+    // 监听挂在 window 上（宠物是浮在页面任意角落的悬浮件，不是页面里的某个区块），
+    // passive + 只读坐标，不挡任何交互。
+    useEffect(() => {
+      if (cfg.followMouse !== true) return;
+      const onMove = (event: PointerEvent): void => {
+        const root = rootRef.current;
+        if (!root) return;
+        // 冻结（别人正在驱动这只宠物）与睡觉都不改朝向：那时它归别的状态机管。
+        if (ownAnim.isFrozen() || liveRef.current.flow?.sleeping() === true) return;
+        const rect = root.getBoundingClientRect();
+        const petCenterX = rect.left + rect.width / 2;
+        const side = sideTowardPointer({
+          current: card.facingRef.current,
+          hysteresis: POINTER_HYSTERESIS_PX,
+          petCenterX,
+          pointerX: event.clientX,
+        });
+        card.mouseSideRef.current = side;
+        if (side !== card.facingRef.current) {
+          card.facingRef.current = side; // 立即同步：翻转动画与镜像读的是它。
+          actions.setFacing(side);
+          // 立刻重新套镜像：平时镜像是在动画换源时写的，换朝向不重写，
+          // 宠物要等下一段动画才开始才翻过去 —— 看着就像「没反应」。
+          ownAnim.refreshFacing();
+        }
+      };
+      window.addEventListener('pointermove', onMove, { passive: true });
+      return () => window.removeEventListener('pointermove', onMove);
+    });
     // 卡片状态容器：动画、朝向、拖拽态、提示与自定义位置；写入口在 card-state。
     const card = useCardState({
       anim: cfg.animations.idle[0] ?? '',

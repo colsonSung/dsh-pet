@@ -19,6 +19,7 @@ const pet = (id: string, assetRoot?: string): Pet => ({
   balanceEnabled: false,
   whisperEnabled: false,
   workStatusEnabled: false,
+  followMouse: false,
   fixedEnabled: false,
   display: 'web',
   position: { corner: 'top-right', marginX: 0, marginY: 0 },

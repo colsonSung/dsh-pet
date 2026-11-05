@@ -156,7 +156,10 @@ export function createAnimationFlow(rt: AnimationFlowRuntime) {
         return;
       }
       if (cue.kind === 'turn') {
-        const next = card.state.facing === 'left' ? 'right' : 'left';
+        // 鼠标驱动时转到**光标那一侧**，不是对调：
+        // 随机链要是对着鼠标干（用户把光标放在左边，宠物自己转到右边），下一个指针事件又转回来，来回抽搐。
+        // 没见过光标（mouseSideRef 为 null）时才按老规矩对调。
+        const next = card.mouseSideRef.current ?? (card.state.facing === 'left' ? 'right' : 'left');
         card.actions.setFacing(next);
         card.facingRef.current = next; // 立即同步：翻转后的掷骰用新朝向过滤。
         // 翻面不改 anim/once/seq，换源 effect 不会重跑：不显式回链，随机链就此停在末帧。

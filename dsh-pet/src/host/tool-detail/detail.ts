@@ -25,8 +25,15 @@ import {
   SILENT_TOOLS,
   TOOL_COPY,
   TOOL_RULES,
-  UNKNOWN_TOOL_LINE,
 } from './copy.ts';
+
+/**
+ * MCP 工具名 `mcp__<server>__<tool>` → 服务端名（中间那段）。取不到就返回整名。
+ */
+function mcpServerOf(name: string): string {
+  const parts = name.split('__');
+  return parts.length >= 3 && parts[1] !== '' ? parts[1] : name;
+}
 
 /**
  * 按外部给的键查表，只认自有属性。
@@ -78,9 +85,13 @@ export function toolDetailFromEvent(
   const args = parseArgs(event?.data?.arguments);
   // pwsh 走命令表（它没有「文件目标」，目标就是命令本身）
   if (name === 'pwsh') return pwshDetail(args);
+  // MCP 工具：名字形如 mcp__<server>__<tool>，服务端名就是最有用的那部分信息
+  if (name.startsWith('mcp__')) return clip(`去 ${mcpServerOf(name)} 那边问问`);
   const entry = own(TOOL_COPY, name);
-  // 未知工具：不猜参数，也不报工具名
-  if (entry === undefined) return clip(UNKNOWN_TOOL_LINE);
+  // 未知工具：不给文案。
+  // 「这工具是干嘛的」是一句反问，等于没说——气泡是给用户看的话，
+  // 没有内容就不该占着位置（客户端会把上一条真实文案留住，或干脆不亮）。
+  if (entry === undefined) return null;
   const rule = own(TOOL_RULES, name);
   const line = pickLine(entry.lines);
   // workflow 这类整句不带对象的，直接给（不需要目标）

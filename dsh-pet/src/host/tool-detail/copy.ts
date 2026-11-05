@@ -5,7 +5,7 @@
  * 必须始终成立：每句都带具体对象，不说空话；不出现参数值（可能含 token 或内网地址）。
  * @module dsh-pet/src/host/tool-detail/copy
  */
-import { fileTarget, filesTarget, firstStr, queryTarget, urlHost } from './target.ts';
+import { commandTarget, fileTarget, filesTarget, firstStr, queryTarget, urlHost } from './target.ts';
 
 /** 句子里可用的占位符：{target} 目标名、{cmd} 命令名。 */
 export type CopyLine = string;
@@ -47,6 +47,23 @@ const SKILL_COPY: readonly CopyLine[] = ['学个新本事 {target}', '{target} �
 /** 委派子任务。 */
 const SUBAGENT_COPY: readonly CopyLine[] = ['叫人搭把手：{target}', '让帮手去看看 {target}', '{target} 交给帮手了'];
 
+/** 跑命令：只说程序名（npm / pytest / docker…），不带参数值。 */
+const SHELL_COPY: readonly CopyLine[] = ['跑一下 {target} 咯', '{target} 跑起来了', '让 {target} 干点活'];
+
+/** DSH 自家工具：会话检索。 */
+const SESSION_COPY: readonly CopyLine[] = ['翻翻之前聊的 {target}', '{target} 那段我再看看', '去 {target} 里翻一翻'];
+
+/** DSH 自家工具：记忆。 */
+const MEMORY_COPY: readonly CopyLine[] = ['把这条记进 {target}', '{target} 里存一下', '记一笔到 {target}'];
+
+/** DSH 自家工具：日程提醒。 */
+const SCHEDULE_COPY: readonly CopyLine[] = ['给 {target} 定个提醒', '{target} 我先记着', '到点提醒你 {target}'];
+
+/** DSH 自家工具：团队任务板。 */
+const TEAM_COPY: readonly CopyLine[] = ['派活儿：{target}', '{target} 这活儿交出去', '把 {target} 记到板上'];
+
+/** DSH 自家工具：查业务插件（需求 / 会议 / 随手记…）。 */
+const PLUGIN_COPY: readonly CopyLine[] = ['去 {target} 查查看', '{target} 那边瞅瞅', '问问 {target} 有啥'];
 /** 一个工具的文案：3 句带 {target} 的说法 + 目标太长时的一句纯氛围兜底。 */
 export interface ToolCopy {
   readonly lines: readonly CopyLine[];
@@ -78,6 +95,37 @@ export const TOOL_COPY: Readonly<Record<string, ToolCopy>> = {
     lines: ['我去查查 {target}', '{target} 得搜搜才知道', '上网问问 {target} 吧'],
     short: '上网查查',
   },
+  // DSH 常用工具：工具名不认识时气泡会说「这工具是干嘛的」，那句话等于没说，
+  // 所以把真正常用的都补进表里——表里有的才谈得上「有用」。
+  bash: { lines: SHELL_COPY, short: '跑个命令看看' },
+  shell: { lines: SHELL_COPY, short: '跑个命令看看' },
+  apply_patch: { lines: EDIT_COPY, short: '这里得改改' },
+  session_search: { lines: SESSION_COPY, short: '翻翻之前聊的' },
+  session_event_read: { lines: SESSION_COPY, short: '看看之前那会儿' },
+  session_event_search: { lines: SESSION_COPY, short: '翻翻之前聊的' },
+  session_trace: { lines: SESSION_COPY, short: '看看这事的来龙去脉' },
+  memory_save: { lines: MEMORY_COPY, short: '记一笔' },
+  memory_search: { lines: MEMORY_COPY, short: '翻翻记忆' },
+  memory_instruct: { lines: MEMORY_COPY, short: '记下这条规矩' },
+  memory_forget: { lines: MEMORY_COPY, short: '忘掉那条' },
+  memory_profile: { lines: MEMORY_COPY, short: '翻翻记忆' },
+  schedule_create: { lines: SCHEDULE_COPY, short: '定个提醒' },
+  schedule_list: { lines: SCHEDULE_COPY, short: '看看有哪些提醒' },
+  schedule_update: { lines: SCHEDULE_COPY, short: '改一下提醒' },
+  schedule_delete: { lines: SCHEDULE_COPY, short: '撤掉那个提醒' },
+  team_task_create: { lines: TEAM_COPY, short: '派个活儿' },
+  team_task_get: { lines: TEAM_COPY, short: '看看那活儿' },
+  team_task_list: { lines: TEAM_COPY, short: '看看板上有哪些活' },
+  team_task_update: { lines: TEAM_COPY, short: '改一下那活儿' },
+  spawn_teammate: { lines: TEAM_COPY, short: '叫个人来搭把手' },
+  send_message: { lines: TEAM_COPY, short: '跟同伴说一声' },
+  list_agents: { lines: TEAM_COPY, short: '看看都有谁在忙' },
+  onerway_pmo: { lines: PLUGIN_COPY, short: '查查需求那边' },
+  moments_memo: { lines: PLUGIN_COPY, short: '记一条随手记' },
+  open_design_catalog: { lines: PLUGIN_COPY, short: '看看设计系统' },
+  open_design_daemon: { lines: PLUGIN_COPY, short: '叫一下设计工具' },
+  vscode_extension: { lines: PLUGIN_COPY, short: '装个插件试试' },
+  vscode_extension_host: { lines: PLUGIN_COPY, short: '看看插件跑起来没' },
   web_fetch: {
     lines: ['去 {target} 瞅瞅有啥', '{target} 这页我翻翻', '看看 {target} 上写了啥'],
     short: '去网上看看',
@@ -170,6 +218,15 @@ export const SILENT_TOOLS: ReadonlySet<string> = new Set([
 
 /** 取目标的方式（与文案表按工具名关联；pwsh 不在这里，它走命令表）。 */
 export const TOOL_RULES: Readonly<Record<string, ToolRule>> = {
+  // 跑命令：只取程序名（npm / pytest / docker…），参数不上屏
+  bash: { pick: (args) => {
+    const command = firstStr(args, ['command', 'script']);
+    return command === null ? null : commandTarget(command);
+  } },
+  shell: { pick: (args) => {
+    const command = firstStr(args, ['command', 'script']);
+    return command === null ? null : commandTarget(command);
+  } },
   read: { pick: fileTarget, path: true },
   read_image: { pick: fileTarget, path: true },
   write: { pick: fileTarget, path: true },
