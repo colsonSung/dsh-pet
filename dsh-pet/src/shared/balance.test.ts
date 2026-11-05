@@ -184,21 +184,38 @@ describe('decideBalanceNotice —— 弹不弹文字说明（两端共用同一�
     );
   });
 
-  test('自动轮询：首次不可用要弹（lastKey=null），同一原因再来一次不弹', () => {
-    const first = decideBalanceNotice(unsupported, null, false);
-    assert.deepEqual(first, { show: true, key: 'unsupported:unregistered-provider' });
-    assert.equal(decideBalanceNotice(unsupported, first.key, false).show, false, '同一原因不重复打扰');
+  test('自动轮询：缺凭证与抓取失败要弹（用户改得动），同一原因再来一次不弹', () => {
+    const missing = { provider: 'deepseek-official', ok: false as const, reason: 'credential-missing' as const };
+    const first = decideBalanceNotice(missing, null, false);
+    assert.deepEqual(first, { show: true, key: 'credential-missing:deepseek-official' });
+    assert.equal(decideBalanceNotice(missing, first.key, false).show, false, '同一原因不重复打扰');
+    const broken = { provider: 'opencode-go', ok: false as const, reason: 'fetch-error' as const };
+    assert.equal(decideBalanceNotice(broken, null, false).show, true, '抓取失败也要弹一次');
   });
 
-  test('自动轮询：原因变化再弹一次；换了另一个未登记的服务商也算变化', () => {
-    assert.equal(decideBalanceNotice(unsupported, 'credential-missing:deepseek-official', false).show, true);
+  test('自动轮询：原因变化再弹一次', () => {
+    assert.equal(
+      decideBalanceNotice({ provider: 'openrouter', ok: false, reason: 'fetch-error' }, 'credential-missing:deepseek-official', false)
+        .show,
+      true,
+    );
+  });
+
+  test('自动轮询：服务商不支持余额时不弹（配置事实，用户改不了）', () => {
+    // 首次检测到不弹：它不是一次失败，换服务商才会变，而那不是后台轮询该提醒的事。
+    assert.deepEqual(decideBalanceNotice(unsupported, null, false), {
+      show: false,
+      key: 'unsupported:unregistered-provider',
+    });
+    assert.equal(decideBalanceNotice(unsupported, rememberedKey(unsupported), false).show, false);
+    // 换了另一个服务商同样不弹：还是同一个事实。
     assert.equal(
       decideBalanceNotice(
         { provider: 'openrouter', ok: false, reason: 'unsupported' },
         rememberedKey(unsupported),
         false,
       ).show,
-      true,
+      false,
     );
   });
 

@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PACKAGE_ROOT } from '../paths.ts';
 import { queryBalance } from '../balance/index.ts';
+import { createBalanceReporter } from '../balance/report.ts';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import type { ChatMemory } from './chat-memory.ts';
 import type { HostSetup } from './setup.ts';
@@ -30,6 +31,8 @@ export type BalancePollInput = {
  */
 export function createBalancePoll(deps: BalancePollInput) {
   const { ctx, configPaths, getActivePetId, log, state, standaloneAiBalance } = deps;
+  // 上报器自己记住「哪些服务商说过不支持」，调用方只管把结果交过来。
+  const reportBalance = createBalanceReporter(log);
   /** 当前生效宠物列表：成品配置拍平（合并器已保证 id 唯一、字段填满），命令与桌面模式共用。 */
   const effectivePetList = (): Record<string, unknown>[] => flattenPetList(readAllConfig(configPaths));
 
@@ -97,16 +100,9 @@ export function createBalancePoll(deps: BalancePollInput) {
         },
       );
       state.writeSection('balance', mark(result));
-      // 失败也写 S（前端弹文字说明），日志同样留一条：否则「查了、失败了」与「根本没查」
-      // 在文件里长得一模一样。成功用 info，失败用 warn（亮度不同，扫一眼就能分辨）。
-      if (result.ok) {
-        log.info(`[dsh-pet] 余额刷新成功 provider=${result.provider}（${result.shape}）`);
-      } else {
-        log.warn(
-          `[dsh-pet] 余额刷新失败 provider=${result.provider} reason=${result.reason}` +
-            (result.message ? ' ' + result.message : ''),
-        );
-      }
+      // 结果照旧写进状态（前端据此决定弹不弹说明），日志由上报器统一处理：
+      // 「未登记服务商」是配置事实，按 info 记一次；真失败才 warn，每次都记。
+      reportBalance(result);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       state.writeSection(
